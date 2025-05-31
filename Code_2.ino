@@ -44,6 +44,7 @@ const int MONEY_CLOSED_ANGLE = 0;  // Angle for money dispenser closed/rest
 const int MONEY_OPEN_ANGLE = 90;   // Angle for money dispenser open/dispensing
 
 // --- Password Configuration ---
+bool moneyPossiblyNotTaken = false; //secondary password for dispensing
 const String correctPassword = "1234"; // Password for the lock
 String enteredPassword = "";          // Stores user's keypad input
 
@@ -127,30 +128,32 @@ int readUltrasonicDistance() {
 }
 
 void handleMoneyDispenseLogic(int currentDistance) {
-  // Ignore readings that indicate a timeout or extremely high distance
-  if (currentDistance == -1 || currentDistance > 400) { // Max practical range for many HC-SR04 is ~400cm
-    // Optionally, handle this error or just ignore it for now
-    return;
-  }
+  if (currentDistance == -1 || currentDistance > 400) return;
 
   bool currentObjectPresent = (currentDistance < THRESHOLD_DISTANCE_CM);
 
-  // Check if an object was present and has now been removed
-  if (objectWasPresent && !currentObjectPresent) {
-    Serial.println("--- OBJECT REMOVED! Dispensing money... ---");
-    servoMoney.write(MONEY_OPEN_ANGLE); // Move servo to dispense position
-    delay(1500);                        // Wait for dispensing action
-    servoMoney.write(MONEY_CLOSED_ANGLE); // Return servo to original position
+  if (currentObjectPresent && !objectWasPresent) {
+    Serial.println("--- Object detected! Dispensing money... ---");
+    servoMoney.write(MONEY_OPEN_ANGLE);
+    delay(1500);
+    servoMoney.write(MONEY_CLOSED_ANGLE);
     Serial.println("Money dispensed. Servo returned to home.");
-  }
-  // Optional: Add a message if an object just became present
-  else if (!objectWasPresent && currentObjectPresent) {
-    Serial.println("--- Object detected. ---");
+
+    // Check again if object still present (indicating money not taken)
+    int recheckDistance = readUltrasonicDistance();
+    if (recheckDistance != -1 && recheckDistance < THRESHOLD_DISTANCE_CM) {
+      moneyPossiblyNotTaken = true;
+      Serial.println("Money possibly not taken. Enter secondary password (4321) to re-dispense.");
+    }
+  } 
+  else if (!currentObjectPresent && objectWasPresent) {
+    Serial.println("--- Object removed. ---");
+    moneyPossiblyNotTaken = false; // Reset since person left
   }
 
-  // Update the 'objectWasPresent' state for the next loop iteration
   objectWasPresent = currentObjectPresent;
 }
+
 
 void processKeypadInput(char key) {
   Serial.print("Key pressed: ");
@@ -163,19 +166,30 @@ void processKeypadInput(char key) {
       delay(3000);                      // Keep it open for 3 seconds
       servoLock.write(LOCK_CLOSED_ANGLE); // Return lock servo to closed position
       Serial.println("Lock closed.");
-    } else {
+    } 
+    else if (enteredPassword == "4321" && moneyPossiblyNotTaken && objectWasPresent) {
+      Serial.println("Secondary password correct! Re-dispensing money...");
+      servoMoney.write(MONEY_OPEN_ANGLE);
+      delay(1500);
+      servoMoney.write(MONEY_CLOSED_ANGLE);
+      Serial.println("Money re-dispensed. Servo returned to home.");
+      moneyPossiblyNotTaken = false; // Reset after re-dispense
+    } 
+    else {
       Serial.println("Password invalid!");
     }
-    enteredPassword = ""; // Clear password input after attempt
+
+    enteredPassword = ""; // Clear password input after any attempt
     Serial.println("Enter new password (if needed):");
-  } else if (key == '*') { // Clear entered password
+  } 
+  else if (key == '*') { // Clear entered password
     enteredPassword = "";
     Serial.println("Entered password cleared.");
     Serial.println("Enter password:");
-  }
-  // The 'D' key for money dispense has been removed as it's now sensor-controlled.
+  } 
   else {
     // Build the entered password string for numeric/letter keys
     enteredPassword += key;
   }
 }
+
